@@ -105,12 +105,43 @@ def count_buildings(pbf: str, boundary) -> dict[str, int]:
     return stats
 
 
+def find_unclosed_ways(pbf: str, boundary, limit: int = 20) -> list[int]:
+    """Ways tagged building=* that are NOT closed rings.
+
+    These are data errors: a building must be a closed way or a multipolygon.
+    The area assembler silently skips them, so without this pass they vanish
+    from the count with no indication that anything was dropped.
+    """
+    touching = prep(boundary)
+    broken: list[int] = []
+    fp = (
+        osmium.FileProcessor(pbf, osmium.osm.WAY)
+        .with_locations()
+        .with_filter(osmium.filter.KeyFilter("building"))
+        .with_filter(osmium.filter.GeoInterfaceFilter())
+    )
+    for obj in fp:
+        if obj.tags.get("building", "").lower() in NON_BUILDING:
+            continue
+        if obj.is_closed():
+            continue  # already counted as an area
+        geom = shape(obj.__geo_interface__)
+        if touching.intersects(geom):
+            broken.append(obj.id)
+            if len(broken) >= limit:
+                break
+    return broken
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pbf", help="path to .osm.pbf extract")
     ap.add_argument("--find", metavar="NAME", help="list boundary relations with this name")
     ap.add_argument("--relation-id", type=int, help="OSM relation id of the boundary")
+    ap.add_argument("--check-unclosed", action="store_true",
+                    help="extra pass: report building ways that are not closed rings "
+                         "(data errors the area assembler skips silently)")
     args = ap.parse_args()
 
     if args.find:
@@ -156,6 +187,17 @@ def main() -> int:
     print(f"  buildings touching the boundary at all           : {s['intersects']}")
     print(f"      of the inside ones, mapped as closed ways    : {s['from_way']}")
     print(f"      of the inside ones, mapped as multipolygons  : {s['from_relation']}")
+
+    if args.check_unclosed:
+        print()
+        print("Checking for unclosed building ways ...", file=sys.stderr)
+        broken = find_unclosed_ways(args.pbf, boundary)
+        if not broken:
+            print("  unclosed building ways: none (all rings are valid)")
+        else:
+            print(f"  unclosed building ways: {len(broken)} (not counted above)")
+            for wid in broken:
+                print(f"      https://www.openstreetmap.org/way/{wid}")
     return 0
 
 

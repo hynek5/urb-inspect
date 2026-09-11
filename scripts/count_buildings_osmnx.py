@@ -82,10 +82,30 @@ def main() -> int:
     # mixed: a building can come back as a way or as a multipolygon relation.
     by_type = gdf.index.get_level_values("element").value_counts().to_dict()
 
+    # Overpass returns any way carrying building=*, closed or not. An unclosed
+    # way yields a LineString, not a Polygon -- that is a broken building in the
+    # source data, and it should not be counted as one. (pyosmium never sees
+    # these: its area assembler only builds areas from closed rings.)
+    geom_types = gdf.geometry.geom_type.value_counts().to_dict()
+    areal = {"Polygon", "MultiPolygon"}
+    n_areal = sum(n for t, n in geom_types.items() if t in areal)
+    n_broken = len(gdf) - n_areal
+
     print()
-    print(f"  buildings returned : {len(gdf)}")
+    print(f"  features with building=* : {len(gdf)}")
     for elem, n in sorted(by_type.items()):
-        print(f"      as {elem:10s}   : {n}")
+        print(f"      as {elem:10s}         : {n}")
+    print()
+    print("  by geometry type:")
+    for t, n in sorted(geom_types.items(), key=lambda kv: -kv[1]):
+        flag = "" if t in areal else "   <-- NOT AN AREA"
+        print(f"      {t:16s} {n}{flag}")
+    print()
+    print(f"  countable buildings (areal only) : {n_areal}")
+    if n_broken:
+        print(f"  discarded (unclosed ways / points): {n_broken}")
+        print("      these are data errors in OSM: a building must be a closed")
+        print("      way or a multipolygon relation.")
     print()
     print("  top building values:")
     for val, n in gdf["building"].value_counts().head(8).items():
