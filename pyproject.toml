@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "urb-inspect"
+version = "0.1.0"
+description = "Inspect OpenStreetMap objects within an area"
+requires-python = ">=3.11"
+dependencies = [
+    "geopandas>=1.0",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+# Offline source: reads local .osm.pbf extracts. The primary backend.
+pbf = ["osmium>=4.0"]
+# Online source: geocoding and cross-validation. Rate limited, do not sweep.
+overpass = ["osmnx>=2.0"]
+all = ["osmium>=4.0", "osmnx>=2.0"]
+
+[tool.setuptools.packages.find]
+include = ["urb_inspect*"]
