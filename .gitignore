@@ -10,3 +10,7 @@ venv/
 *.osm.pbf
 *.osm.bz2
 *.osm
+
+# generated results
+out/
+out_*/

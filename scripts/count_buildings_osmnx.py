@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from urb_inspect.export import write_result  # noqa: E402
 from urb_inspect.metrics import add_metrics, summarize  # noqa: E402
 from urb_inspect.sources import OverpassSource  # noqa: E402
 
@@ -31,8 +32,9 @@ def main() -> int:
     ap.add_argument("--relation-id", type=int, help="OSM relation id (skips name lookup)")
     ap.add_argument("--which-result", type=int, default=None,
                     help="pick the Nth Nominatim result instead of the first")
-    ap.add_argument("--courtyards", action="store_true",
-                    help="also compute courtyards and footprint areas")
+    ap.add_argument("--out-dir", default="out", metavar="DIR",
+                    help="where to write .gpkg/.csv/.meta.json (default: out)")
+    ap.add_argument("--no-write", action="store_true", help="print only, write nothing")
     args = ap.parse_args()
 
     if not args.query and args.relation_id is None:
@@ -54,16 +56,17 @@ def main() -> int:
     print("Querying Overpass for buildings ...", file=sys.stderr)
     result = src.fetch(boundary, {"building": True})
 
+    enriched = add_metrics(result.features)
+
     print()
     print(result.report())
+    print()
+    print(summarize(enriched))
 
-    if args.courtyards:
-        enriched = add_metrics(result.features)
+    if not args.no_write:
         print()
-        print(summarize(enriched))
-    else:
-        print()
-        print(summarize(result.features))
+        for path in write_result(result, args.out_dir, features=enriched):
+            print(f"  wrote {path}")
     return 0
 
 

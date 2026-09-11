@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from urb_inspect.export import write_result  # noqa: E402
 from urb_inspect.metrics import add_metrics, summarize  # noqa: E402
 from urb_inspect.sources import PbfSource  # noqa: E402
 
@@ -37,8 +38,9 @@ def main() -> int:
     ap.add_argument("pbf", help="path to .osm.pbf extract")
     ap.add_argument("--find", metavar="NAME", help="list boundary relations with this name")
     ap.add_argument("--relation-id", type=int, help="OSM relation id of the boundary")
-    ap.add_argument("--courtyards", action="store_true",
-                    help="also compute courtyards and footprint areas")
+    ap.add_argument("--out-dir", default="out", metavar="DIR",
+                    help="where to write .gpkg/.csv/.meta.json (default: out)")
+    ap.add_argument("--no-write", action="store_true", help="print only, write nothing")
     ap.add_argument("--check-unclosed", action="store_true",
                     help="extra pass: report building ways that are not closed rings")
     args = ap.parse_args()
@@ -76,15 +78,19 @@ def main() -> int:
     within = src.fetch(boundary, {"building": True}, predicate="within")
     touching = src.fetch(boundary, {"building": True}, predicate="intersects")
 
+    enriched = add_metrics(within.features)
+
     print()
     print(within.report())
-    print(f"  touching boundary          : {len(touching)}")
-    print(f"  straddling the boundary    : {len(touching) - len(within)}")
+    print(f"      touching boundary        : {len(touching)}")
+    print(f"      straddling the boundary  : {len(touching) - len(within)}")
+    print()
+    print(summarize(enriched))
 
-    if args.courtyards:
-        enriched = add_metrics(within.features)
+    if not args.no_write:
         print()
-        print(summarize(enriched))
+        for path in write_result(within, args.out_dir, features=enriched):
+            print(f"  wrote {path}")
 
     if args.check_unclosed:
         print()

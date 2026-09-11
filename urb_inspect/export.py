@@ -1,0 +1,147 @@
+"""Writing results to disk.
+
+Three files per run, because a geometry file alone loses the context needed
+to interpret it:
+
+  <base>.gpkg       full geometry plus every OSM tag as a column
+  <base>.csv        the columns a human actually reads, no geometry
+  <base>.meta.json  provenance: source, snapshot, predicate, what was discarded
+
+GeoPackage is the default geometry format: one file, typed columns, opens
+directly in QGIS, and unlike GeoJSON it does not re-encode coordinates as text.
+"""
+
+from __future__ import annotations
+
+import json
+import unicodedata
+from datetime import datetime, timezone
+from pathlib import Path
+
+import geopandas as gpd
+
+from .sources.base import FetchResult
+
+# Columns worth putting in the human-readable CSV. OSM data is very wide --
+# a few hundred sparse tag columns is normal -- so the CSV is a readable
+# projection while the GeoPackage keeps everything.
+CORE_COLUMNS = [
+    "element",
+    "osm_id",
+    "building",
+    "name",
+    "addr:street",
+    "addr:housenumber",
+    "addr:conscriptionnumber",
+    "addr:postcode",
+    "building:levels",
+    "roof:shape",
+    "start_date",
+    "heritage",
+    "area_m2",
+    "courtyards",
+]
+
+
+def slugify(text: str | None, fallback: str = "area") -> str:
+    if not text:
+        return fallback
+    text = text.split(",")[0]
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    out = "".join(c.lower() if c.isalnum() else "-" for c in text)
+    out = "-".join(part for part in out.split("-") if part)
+    return out or fallback
+
+
+def sanitize(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Flatten values no file format can represent.
+
+    OSMnx returns list-valued columns (relation member ids, for instance);
+    these have no scalar representation in GPKG or CSV.
+    """
+    out = gdf.copy()
+    for col in out.columns:
+        if col == out.geometry.name:
+            continue
+        if out[col].map(lambda v: isinstance(v, (list, tuple, set, dict))).any():
+            out[col] = out[col].map(
+                lambda v: "; ".join(map(str, v))
+                if isinstance(v, (list, tuple, set))
+                else (json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else v)
+            )
+    return out
+
+
+def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame) -> dict:
+    by_element = (
+        gdf["element"].value_counts().to_dict() if "element" in gdf.columns else {}
+    )
+    meta = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": result.source,
+        "snapshot": result.snapshot,
+        "predicate": result.predicate,
+        "crs": str(gdf.crs) if gdf.crs else None,
+        "boundary": {
+            "name": result.boundary.name,
+            "osm_relation_id": result.boundary.osm_relation_id,
+            "provenance": result.boundary.provenance,
+            "bounds": list(result.boundary.geometry.bounds),
+        },
+        "counts": {
+            "features": int(len(gdf)),
+            "by_element": {str(k): int(v) for k, v in by_element.items()},
+        },
+        "discarded": {k: int(v) for k, v in result.discarded.items()},
+    }
+    if "building" in gdf.columns:
+        meta["counts"]["by_building"] = {
+            str(k): int(v) for k, v in gdf["building"].value_counts().items()
+        }
+    if "courtyards" in gdf.columns:
+        meta["counts"]["with_courtyards"] = int((gdf["courtyards"] > 0).sum())
+    return meta
+
+
+def write_result(
+    result: FetchResult,
+    out_dir: str | Path = "out",
+    basename: str | None = None,
+    features: gpd.GeoDataFrame | None = None,
+) -> list[Path]:
+    """Write geometry, a readable table, and provenance. Returns the paths."""
+    gdf = result.features if features is None else features
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if basename is None:
+        rid = result.boundary.osm_relation_id
+        stem = slugify(result.boundary.name, fallback="area")
+        tag = "pbf" if "pbf" in result.source else "overpass"
+        basename = f"{stem}-r{rid}-{tag}" if rid else f"{stem}-{tag}"
+
+    written: list[Path] = []
+
+    meta_path = out_dir / f"{basename}.meta.json"
+    meta_path.write_text(
+        json.dumps(_metadata(result, gdf), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    written.append(meta_path)
+
+    if gdf.empty:
+        return written
+
+    clean = sanitize(gdf)
+
+    gpkg_path = out_dir / f"{basename}.gpkg"
+    clean.to_file(gpkg_path, driver="GPKG", layer="features")
+    written.append(gpkg_path)
+
+    cols = [c for c in CORE_COLUMNS if c in clean.columns]
+    csv_path = out_dir / f"{basename}.csv"
+    clean[cols].to_csv(csv_path, index=False, encoding="utf-8")
+    written.append(csv_path)
+
+    return written
