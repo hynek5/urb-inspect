@@ -35,6 +35,17 @@ from shapely.prepared import prep
 NON_BUILDING = {"no", "none"}
 
 
+def snapshot_info(pbf: str) -> str:
+    """When the extract was cut.
+
+    A PBF is a fixed snapshot; Overpass is live. Without this, a difference
+    between the two counts cannot be told apart from a bug.
+    """
+    header = osmium.FileProcessor(pbf, osmium.osm.NOTHING).header
+    ts = header.get("osmosis_replication_timestamp", "")
+    return ts or "unknown (no replication timestamp in header)"
+
+
 def find_boundaries(pbf: str, name: str) -> list[tuple[int, dict]]:
     """Pass 1: every relation matching `name` that looks like a boundary.
 
@@ -164,6 +175,7 @@ def main() -> int:
     if not args.relation_id:
         ap.error("give either --find NAME or --relation-id ID")
 
+    print(f"Extract snapshot: {snapshot_info(args.pbf)}", file=sys.stderr)
     print(f"Assembling boundary for relation {args.relation_id} ...", file=sys.stderr)
     boundary = build_polygon(args.pbf, args.relation_id)
     if boundary is None:
