@@ -135,6 +135,13 @@ def write_result(
 
     clean = sanitize(gdf)
 
+    # Writers call reset_index(drop=False) internally; a named index level that
+    # duplicates a column name raises. Sources already return a RangeIndex --
+    # this covers frames assembled by hand.
+    named = {n for n in clean.index.names if n is not None}
+    if named & set(clean.columns):
+        clean = clean.reset_index(drop=True)
+
     gpkg_path = out_dir / f"{basename}.gpkg"
     clean.to_file(gpkg_path, driver="GPKG", layer="features")
     written.append(gpkg_path)

@@ -105,9 +105,15 @@ class OverpassSource:
         discarded["not an area"] = int((~areal).sum())
         gdf = gdf[areal]
 
+        # OSMnx indexes by a MultiIndex of (element, id). Lift those into
+        # columns and drop the index: writers call reset_index(drop=False)
+        # internally, which collides when an index level and a column share a
+        # name. PbfSource returns a RangeIndex, so this also makes the two
+        # backends return identically shaped frames.
         gdf = gdf.copy()
         gdf["element"] = gdf.index.get_level_values("element")
         gdf["osm_id"] = gdf.index.get_level_values("id")
+        gdf = gdf.reset_index(drop=True)
 
         return FetchResult(
             features=gdf,

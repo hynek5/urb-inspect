@@ -18,6 +18,10 @@ pbf = ["osmium>=4.0"]
 # Online source: geocoding and cross-validation. Rate limited, do not sweep.
 overpass = ["osmnx>=2.0"]
 all = ["osmium>=4.0", "osmnx>=2.0"]
+dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 include = ["urb_inspect*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
