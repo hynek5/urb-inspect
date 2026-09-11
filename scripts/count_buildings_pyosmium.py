@@ -12,7 +12,12 @@ Step 1 — find the boundary (prints every candidate with its tags, so you pick)
 
 Step 2 — count, using the relation id from step 1:
 
-    python count_buildings_pyosmium.py czech-republic-latest.osm.pbf --relation-id 123456
+    python count_buildings_pyosmium.py czech-republic-latest.osm.pbf --relation-id 433401
+
+Known boundaries (pin the id, not the name — tagging gets reorganised, ids do not):
+    433401  Malá Strana / Lesser Town, Praha
+            boundary=cadastral, official_status=cz:katastrální území, ref=727091
+            https://www.openstreetmap.org/relation/433401
 
 Requires: pip install osmium shapely
 """
@@ -116,7 +121,9 @@ def main() -> int:
         print(f"{len(cands)} candidate(s) named {args.find!r}:\n")
         for rid, tags in cands:
             print(f"  relation {rid}   https://www.openstreetmap.org/relation/{rid}")
-            for k in ("boundary", "admin_level", "type", "place", "ref:ruian", "wikidata"):
+            for k in ("boundary", "border_type", "official_status", "admin_level",
+                      "type", "place", "ref", "ref:ruian", "source",
+                      "name:en", "wikidata"):
                 if k in tags:
                     print(f"      {k:12s} = {tags[k]}")
             print()
@@ -129,8 +136,14 @@ def main() -> int:
     print(f"Assembling boundary for relation {args.relation_id} ...", file=sys.stderr)
     boundary = build_polygon(args.pbf, args.relation_id)
     if boundary is None:
-        print(f"Relation {args.relation_id} not found / not assemblable as an area.",
-              file=sys.stderr)
+        print(
+            f"Relation {args.relation_id} was not assembled into an area.\n"
+            "  - Is the relation inside this extract's geographic coverage?\n"
+            "  - osmium assembles relations tagged type=multipolygon or type=boundary;\n"
+            "    check the relation carries one of those.\n"
+            "  - A broken/unclosed boundary ring cannot be assembled at all.",
+            file=sys.stderr,
+        )
         return 1
     print(f"  boundary area: {boundary.area:.8f} deg^2, bounds {boundary.bounds}",
           file=sys.stderr)
