@@ -31,7 +31,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from urb_inspect.export import slugify, write_result  # noqa: E402
-from urb_inspect.metrics import add_poi_metrics, summarize_pois  # noqa: E402
+from urb_inspect.metrics import (  # noqa: E402
+    add_poi_metrics,
+    summarize_pois,
+    summarize_value_counts,
+)
 from urb_inspect.poi_classes import DEFAULT_CLASSES  # noqa: E402
 from urb_inspect.sources import PbfSource  # noqa: E402
 from urb_inspect.sources.base import DEFAULT_POI_KEYS  # noqa: E402
@@ -51,6 +55,10 @@ def main() -> int:
                          f"(default: {','.join(DEFAULT_POI_KEYS)})")
     ap.add_argument("--classes", metavar="CSV", default=str(DEFAULT_CLASSES),
                     help="classification table (default: the bundled poi_classes.csv)")
+    ap.add_argument("--top", type=int, default=20, metavar="N",
+                    help="how many values to list per tag key; 0 for all (default: 20)")
+    ap.add_argument("--counts-only", action="store_true",
+                    help="just the value tallies, skip the everyday/tourist breakdown")
     ap.add_argument("--out-dir", default="out", metavar="DIR",
                     help="where to write .gpkg/.csv/.meta.json (default: out)")
     ap.add_argument("--no-write", action="store_true", help="print only, write nothing")
@@ -83,7 +91,12 @@ def main() -> int:
     print()
     print(result.report())
     print()
-    print(summarize_pois(enriched))
+    print("  occurrences by tag value")
+    print("  " + "-" * 62)
+    print(summarize_value_counts(enriched, top=args.top or None))
+    if not args.counts_only:
+        print()
+        print(summarize_pois(enriched))
 
     if not args.no_write:
         rid = boundary.osm_relation_id

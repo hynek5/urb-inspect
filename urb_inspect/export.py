@@ -20,7 +20,7 @@ from pathlib import Path
 
 import geopandas as gpd
 
-from .metrics import flats_summary, poi_summary
+from .metrics import flats_summary, poi_summary, value_counts_by_key
 from .sources.base import FetchResult
 
 # Columns worth putting in the human-readable CSV. OSM data is very wide --
@@ -133,6 +133,9 @@ def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame) -> dict:
         # worklist for extending poi_classes.csv, and it is only meaningful
         # next to the run that produced it.
         meta["counts"].update(poi_summary(gdf))
+        # Full tally, not truncated: this is a data file, and the long tail is
+        # exactly where the unanticipated values live.
+        meta["counts"]["by_key_value"] = value_counts_by_key(gdf)
     return meta
 
 

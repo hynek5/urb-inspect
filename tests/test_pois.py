@@ -164,3 +164,51 @@ def test_smoke_on_real_extract():
 
     enriched = add_poi_metrics(res.features)
     assert set(enriched["audience"]) <= {"everyday", "tourist", "mixed", "unknown"}
+
+
+def test_value_counts_are_grouped_by_key_and_ranked():
+    """Plain tallies, discovered from the data rather than from a table."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from urb_inspect.metrics import summarize_value_counts, value_counts_by_key
+
+    gdf = gpd.GeoDataFrame(
+        {
+            "poi_key": ["amenity", "amenity", "amenity", "shop", "shop", "tourism"],
+            "poi_value": ["bar", "bar", "cafe", "bakery", "bakery", "hotel"],
+            "geometry": [Point(0, 0)] * 6,
+        },
+        crs="EPSG:4326",
+    )
+    tally = value_counts_by_key(gdf)
+
+    assert tally["amenity"] == {"bar": 2, "cafe": 1}
+    assert tally["shop"] == {"bakery": 2}
+    # busiest key first, and values ranked within it
+    assert list(tally) == ["amenity", "shop", "tourism"]
+    assert list(tally["amenity"]) == ["bar", "cafe"]
+
+    text = summarize_value_counts(gdf, top=1)
+    assert "bar" in text and "1 more values" in text
+
+
+def test_value_counts_need_no_classification():
+    """The tally must work on a raw fetch result, before add_poi_metrics."""
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    from urb_inspect.metrics import value_counts_by_key
+
+    raw = gpd.GeoDataFrame(
+        {"poi_key": ["shop"], "poi_value": ["wibble"], "geometry": [Point(0, 0)]},
+        crs="EPSG:4326",
+    )
+    assert value_counts_by_key(raw) == {"shop": {"wibble": 1}}
+
+
+def test_value_counts_empty_frame():
+    from urb_inspect.metrics import value_counts_by_key
+    from urb_inspect.sources.base import empty_frame
+
+    assert value_counts_by_key(empty_frame()) == {}

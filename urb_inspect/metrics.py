@@ -276,3 +276,42 @@ def summarize_pois(gdf: gpd.GeoDataFrame, top_unclassified: int = 15) -> str:
         for pair, n in missing.most_common(top_unclassified):
             lines.append(f"      {pair:34s} {n}")
     return "\n".join(lines)
+
+
+def value_counts_by_key(gdf: gpd.GeoDataFrame) -> dict[str, dict[str, int]]:
+    """Raw tally of every tag value, grouped by its key.
+
+    No classification table involved: the values come from whatever is in the
+    extract. That is the point -- a table can only report what someone thought
+    to put in it, while this shows what the quarter actually contains,
+    including values nobody anticipated.
+    """
+    if gdf.empty or "poi_key" not in gdf.columns:
+        return {}
+    out: dict[str, dict[str, int]] = {}
+    for key, group in gdf.groupby("poi_key", sort=False):
+        counts = Counter(str(v) for v in group["poi_value"])
+        out[str(key)] = dict(counts.most_common())
+    # most numerous key first, so the eye lands on what dominates
+    return dict(sorted(out.items(), key=lambda kv: -sum(kv[1].values())))
+
+
+def summarize_value_counts(gdf: gpd.GeoDataFrame, top: int | None = 20) -> str:
+    """Per-key ranked value counts. `top` limits each key; None shows all."""
+    tally = value_counts_by_key(gdf)
+    if not tally:
+        return "  (no POIs)"
+
+    lines = []
+    for key, values in tally.items():
+        total = sum(values.values())
+        shown = list(values.items())[: top] if top else list(values.items())
+        lines.append(f"  {key} ({total} features, {len(values)} distinct values)")
+        for value, n in shown:
+            bar = "#" * min(40, round(40 * n / max(values.values())))
+            lines.append(f"      {value:26s} {n:5d}  {bar}")
+        if top and len(values) > top:
+            rest = total - sum(n for _, n in shown)
+            lines.append(f"      {'... ' + str(len(values) - top) + ' more values':26s} {rest:5d}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
