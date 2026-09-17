@@ -6,10 +6,21 @@ dist/
 .venv/
 venv/
 
-# OSM extracts are large and reproducible from Geofabrik; never commit them
+# OSM extracts are large and re-downloadable from Geofabrik; never commit them.
+# Match any .pbf, not just .osm.pbf -- extracts are often renamed on download.
+*.pbf
 *.osm.pbf
 *.osm.bz2
 *.osm
+
+# OSMnx caches Overpass/Nominatim responses next to wherever it is run.
+# Regenerated on demand, and megabytes of it.
+cache/
+**/cache/
+
+# IDE project settings
+.idea/
+.vscode/
 
 # generated results
 out/
