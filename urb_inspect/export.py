@@ -20,6 +20,7 @@ from pathlib import Path
 
 import geopandas as gpd
 
+from .metrics import flats_summary
 from .sources.base import FetchResult
 
 # Columns worth putting in the human-readable CSV. OSM data is very wide --
@@ -35,6 +36,8 @@ CORE_COLUMNS = [
     "addr:conscriptionnumber",
     "addr:postcode",
     "building:levels",
+    "building:flats",
+    "flats",
     "roof:shape",
     "start_date",
     "heritage",
@@ -101,6 +104,8 @@ def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame) -> dict:
         }
     if "courtyards" in gdf.columns:
         meta["counts"]["with_courtyards"] = int((gdf["courtyards"] > 0).sum())
+    if "flats" in gdf.columns:
+        meta["counts"]["flats"] = flats_summary(gdf)
     return meta
 
 
