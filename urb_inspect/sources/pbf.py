@@ -11,18 +11,23 @@ filtering geometries after the fact.
 
 from __future__ import annotations
 
+from typing import Iterator, Sequence
+
 import osmium
 import geopandas as gpd
 from shapely.geometry import shape
+from shapely.geometry.base import BaseGeometry
 from shapely.prepared import prep
 
 from .base import (
+    DEFAULT_POI_KEYS,
     NON_BUILDING,
     OSM_CRS,
     Boundary,
     FetchResult,
     Predicate,
     empty_frame,
+    first_poi_key,
     tags_match,
 )
 
@@ -198,3 +203,134 @@ class PbfSource:
             if gi is not None and touching.intersects(shape(gi)):
                 broken.append(obj.id)
         return broken
+
+    # ---------------------------------------------------------------- POIs
+
+    def fetch_pois(
+        self,
+        boundary: Boundary,
+        keys: Sequence[str] = DEFAULT_POI_KEYS,
+        predicate: Predicate = "within",
+    ) -> FetchResult:
+        """Services and points of interest inside the boundary.
+
+        Separate from fetch() because POIs live on different element types.
+        fetch() assembles areas only, which is right for buildings but misses
+        most shops and cafes: in OSM those are overwhelmingly standalone nodes.
+        This runs a node pass and an area pass and merges them.
+
+        A single real-world service can carry several of `keys` at once -- a
+        surgery tagged both amenity=doctors and healthcare=doctor, a building
+        that is also a shop. It is one service, so the first key in `keys`
+        order wins and the object is emitted once.
+        """
+        keys = tuple(keys)
+        inside = prep(boundary.geometry)
+        rows: list[dict] = []
+        seen: set[tuple[str, int]] = set()
+        discarded = {
+            "outside boundary": 0,
+            "no matching key": 0,
+            "duplicate (node+area)": 0,
+            "explicit absence (key=no)": 0,
+            "geometry not buildable": 0,
+        }
+
+        for element, osm_id, obj_tags, geom in self._poi_candidates(keys):
+            poi_key, poi_value = first_poi_key(obj_tags, keys)
+            if poi_key is None:
+                # KeyFilter passed the object (it has the key) but every value
+                # is an explicit absence, e.g. shop=no on a former shop.
+                if any(k in obj_tags for k in keys):
+                    discarded["explicit absence (key=no)"] += 1
+                else:
+                    discarded["no matching key"] += 1
+                continue
+
+            if geom is None:
+                discarded["geometry not buildable"] += 1
+                continue
+
+            # representative_point() is the point itself for a node, and a
+            # point guaranteed inside the ring for an area.
+            hit = (
+                inside.contains(geom.representative_point())
+                if predicate == "within"
+                else inside.intersects(geom)
+            )
+            if not hit:
+                discarded["outside boundary"] += 1
+                continue
+
+            ident = (element, osm_id)
+            if ident in seen:
+                discarded["duplicate (node+area)"] += 1
+                continue
+            seen.add(ident)
+
+            rows.append(
+                {
+                    **obj_tags,
+                    "element": element,
+                    "osm_id": osm_id,
+                    "poi_key": poi_key,
+                    "poi_value": poi_value,
+                    "geometry": geom,
+                }
+            )
+
+        features = (
+            gpd.GeoDataFrame(rows, geometry="geometry", crs=OSM_CRS)
+            if rows
+            else empty_frame()
+        )
+        return FetchResult(
+            features=features,
+            boundary=boundary,
+            snapshot=self.snapshot,
+            predicate=predicate,
+            source=self.name,
+            discarded=discarded,
+        )
+
+    def _poi_candidates(
+        self, keys: Sequence[str]
+    ) -> Iterator[tuple[str, int, dict[str, str], BaseGeometry | None]]:
+        """Yield (element, osm_id, tags, geometry) from the node then area pass.
+
+        Geometry is None when libosmium could not build one; the caller counts
+        those rather than dropping them silently.
+        """
+        nodes = (
+            osmium.FileProcessor(self.path, osmium.osm.NODE)
+            .with_filter(osmium.filter.KeyFilter(*keys))
+            .with_filter(osmium.filter.GeoInterfaceFilter())
+        )
+        for obj in nodes:
+            yield "node", obj.id, dict(obj.tags), _geometry_of(obj)
+
+        areas = (
+            osmium.FileProcessor(self.path)
+            .with_areas(osmium.filter.KeyFilter(*keys))
+            .with_filter(osmium.filter.EntityFilter(osmium.osm.AREA))
+            .with_filter(osmium.filter.KeyFilter(*keys))
+            .with_filter(osmium.filter.GeoInterfaceFilter())
+        )
+        for obj in areas:
+            element = "way" if obj.from_way() else "relation"
+            yield element, obj.orig_id(), dict(obj.tags), _geometry_of(obj)
+
+
+def _geometry_of(obj) -> BaseGeometry | None:
+    """Shapely geometry, or None when libosmium could not build one.
+
+    GeoInterfaceFilter passes such objects through *without* the attribute
+    rather than dropping them, so this must not assume it is present.
+    """
+    gi = getattr(obj, "__geo_interface__", None)
+    if gi is None:
+        return None
+    geom = shape(gi)
+    if not geom.is_valid:
+        geom = geom.buffer(0)
+    return geom
