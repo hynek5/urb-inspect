@@ -13,6 +13,11 @@ venv/
 *.osm.bz2
 *.osm
 
+# EXCEPTION, THIS BRANCH ONLY: tmp2 exists to hand an extract to a session that
+# cannot reach download.geofabrik.de. Do not merge this branch -- the rule above
+# is there because these files stay in the history forever.
+!urb_inspect/data/*.pbf
+
 # OSMnx caches Overpass/Nominatim responses next to wherever it is run.
 # Regenerated on demand, and megabytes of it.
 cache/
