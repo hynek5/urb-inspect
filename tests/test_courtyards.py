@@ -139,3 +139,38 @@ def test_end_to_end_from_a_real_extract(courtyard_pbf, tmp_path):
     assert c["residential_buildings"] == 1      # building=yes is not residential
     assert c["with_courtyard"] == 1
     assert c["courtyard_area_m2"] > 0
+
+
+def test_threshold_reaches_meta_json(tmp_path, courtyard_pbf):
+    """Regression: the file must describe the run that produced it.
+
+    write_result used to call courtyard_summary with its own default, so
+    passing --min-courtyard-m2 changed the printed summary while meta.json
+    kept reporting the unfiltered numbers and min_area_m2: 0. The file
+    contradicted the screen, and the file is what survives the session.
+    """
+    boundary = Boundary(geometry=box(17.09, 48.13, 17.12, 48.16), name="Yard",
+                        provenance="test")
+    result = PbfSource(courtyard_pbf).fetch(boundary, {"building": True})
+    enriched = add_metrics(result.features)
+
+    yard_m2 = float(enriched["courtyard_area_m2"].max())
+    assert yard_m2 > 0
+
+    def counts(min_m2):
+        paths = write_result(result, tmp_path / f"t{int(min_m2)}", features=enriched,
+                             min_courtyard_m2=min_m2)
+        meta = json.loads(
+            next(p for p in paths if p.suffix == ".json").read_text(encoding="utf-8")
+        )
+        return meta["counts"]["courtyards"]
+
+    kept = counts(0.0)
+    assert kept["min_area_m2"] == 0.0
+    assert kept["with_courtyard"] == 1
+
+    # a threshold above the only courtyard must filter it out *in the file too*
+    filtered = counts(yard_m2 * 2)
+    assert filtered["min_area_m2"] == yard_m2 * 2
+    assert filtered["with_courtyard"] == 0
+    assert filtered["below_threshold"] == 1

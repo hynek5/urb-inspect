@@ -102,7 +102,8 @@ def main() -> int:
 
     if not args.no_write:
         print()
-        for path in write_result(within, args.out_dir, features=enriched):
+        for path in write_result(within, args.out_dir, features=enriched,
+                                 min_courtyard_m2=args.min_courtyard_m2):
             print(f"  wrote {path}")
 
     if args.check_unclosed:

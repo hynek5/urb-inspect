@@ -104,7 +104,8 @@ def sanitize(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return out
 
 
-def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame) -> dict:
+def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame,
+              min_courtyard_m2: float = 0.0) -> dict:
     by_element = (
         gdf["element"].value_counts().to_dict() if "element" in gdf.columns else {}
     )
@@ -133,7 +134,9 @@ def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame) -> dict:
     if "courtyards" in gdf.columns:
         meta["counts"]["with_courtyards"] = int((gdf["courtyards"] > 0).sum())
     if "courtyard_area_m2" in gdf.columns:
-        meta["counts"]["courtyards"] = courtyard_summary(gdf)
+        # Must use the same threshold the run reported, or the file contradicts
+        # the summary that produced it -- and the file is what survives.
+        meta["counts"]["courtyards"] = courtyard_summary(gdf, min_courtyard_m2)
     if "flats" in gdf.columns:
         meta["counts"]["flats"] = flats_summary(gdf)
     if "poi_key" in gdf.columns:
@@ -152,8 +155,14 @@ def write_result(
     out_dir: str | Path = "out",
     basename: str | None = None,
     features: gpd.GeoDataFrame | None = None,
+    min_courtyard_m2: float = 0.0,
 ) -> list[Path]:
-    """Write geometry, a readable table, and provenance. Returns the paths."""
+    """Write geometry, a readable table, and provenance. Returns the paths.
+
+    `min_courtyard_m2` must match what the caller summarised with: the point
+    of the metadata is to describe the run, so a reporting option that changes
+    the numbers has to reach the file as well as the screen.
+    """
     gdf = result.features if features is None else features
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -168,7 +177,8 @@ def write_result(
 
     meta_path = out_dir / f"{basename}.meta.json"
     meta_path.write_text(
-        json.dumps(_metadata(result, gdf), indent=2, ensure_ascii=False),
+        json.dumps(_metadata(result, gdf, min_courtyard_m2), indent=2,
+                   ensure_ascii=False),
         encoding="utf-8",
     )
     written.append(meta_path)
