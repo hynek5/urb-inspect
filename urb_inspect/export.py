@@ -114,6 +114,7 @@ def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame,
         "source": result.source,
         "snapshot": result.snapshot,
         "predicate": result.predicate,
+        "query": result.query,
         "crs": str(gdf.crs) if gdf.crs else None,
         "boundary": {
             "name": result.boundary.name,

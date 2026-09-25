@@ -181,6 +181,7 @@ class PbfSource:
             predicate=predicate,
             source=self.name,
             discarded=discarded,
+            query={"tags": {k: v for k, v in tags.items()}},
         )
 
     # ---------------------------------------------------------------- diagnostics
@@ -299,6 +300,7 @@ class PbfSource:
             predicate=predicate,
             source=self.name,
             discarded=discarded,
+            query={"keys": list(keys)},
         )
 
     def _poi_candidates(

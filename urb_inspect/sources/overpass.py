@@ -91,6 +91,7 @@ class OverpassSource:
                 predicate=predicate,
                 source=self.name,
                 discarded=discarded,
+                query={"tags": dict(tags)},
             )
 
         if "building" in gdf.columns:
@@ -122,6 +123,7 @@ class OverpassSource:
             predicate=predicate,
             source=self.name,
             discarded=discarded,
+            query={"tags": dict(tags)},
         )
 
 

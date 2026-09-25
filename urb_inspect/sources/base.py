@@ -65,6 +65,10 @@ class FetchResult:
     predicate: Predicate
     source: str
     discarded: dict[str, int] = field(default_factory=dict)
+    # What was asked for. Two runs over the same extract and boundary can
+    # differ only in this, so without it an exported result cannot be told
+    # apart from one that used different tags or keys.
+    query: dict[str, object] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.features)
@@ -80,6 +84,10 @@ class FetchResult:
         if "element" in self.features.columns:
             for elem, n in sorted(self.features["element"].value_counts().items()):
                 lines.append(f"      as {elem:9s}: {n}")
+        if self.query:
+            for key, value in self.query.items():
+                shown = ", ".join(map(str, value)) if isinstance(value, (list, tuple)) else value
+                lines.append(f"  {key:11s}: {shown}")
         if self.discarded:
             lines.append("  discarded  :")
             for reason, n in sorted(self.discarded.items(), key=lambda kv: -kv[1]):
