@@ -20,7 +20,12 @@ from pathlib import Path
 
 import geopandas as gpd
 
-from .metrics import flats_summary, poi_summary, value_counts_by_key
+from .metrics import (
+    courtyard_summary,
+    flats_summary,
+    poi_summary,
+    value_counts_by_key,
+)
 from .sources.base import FetchResult
 
 # Columns worth putting in the human-readable CSV. OSM data is very wide --
@@ -43,6 +48,7 @@ CORE_COLUMNS = [
     "heritage",
     "area_m2",
     "courtyards",
+    "courtyard_area_m2",
 ]
 
 # POI results are a different shape: mostly point geometry, and the columns
@@ -126,6 +132,8 @@ def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame) -> dict:
         }
     if "courtyards" in gdf.columns:
         meta["counts"]["with_courtyards"] = int((gdf["courtyards"] > 0).sum())
+    if "courtyard_area_m2" in gdf.columns:
+        meta["counts"]["courtyards"] = courtyard_summary(gdf)
     if "flats" in gdf.columns:
         meta["counts"]["flats"] = flats_summary(gdf)
     if "poi_key" in gdf.columns:

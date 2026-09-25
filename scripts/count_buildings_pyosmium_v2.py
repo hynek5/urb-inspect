@@ -47,6 +47,9 @@ def main() -> int:
     ap.add_argument("--out-dir", default="out", metavar="DIR",
                     help="where to write .gpkg/.csv/.meta.json (default: out)")
     ap.add_argument("--no-write", action="store_true", help="print only, write nothing")
+    ap.add_argument("--min-courtyard-m2", type=float, default=0.0, metavar="M2",
+                    help="ignore courtyards below this area when summarising; "
+                         "half of them are lightwells under 50 m2 (default: 0, count all)")
     ap.add_argument("--check-unclosed", action="store_true",
                     help="extra pass: report building ways that are not closed rings")
     args = ap.parse_args()
@@ -95,7 +98,7 @@ def main() -> int:
     print(f"      touching boundary        : {len(touching)}")
     print(f"      straddling the boundary  : {len(touching) - len(within)}")
     print()
-    print(summarize(enriched))
+    print(summarize(enriched, min_courtyard_m2=args.min_courtyard_m2))
 
     if not args.no_write:
         print()

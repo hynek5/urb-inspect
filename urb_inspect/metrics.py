@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 import geopandas as gpd
+from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 
 from .sources.base import OSM_CRS
@@ -51,6 +52,63 @@ def parse_flats(value) -> int | None:
     return None
 
 
+def courtyard_area(geom: BaseGeometry) -> float:
+    """Total area of the interior rings, in the units of `geom`'s CRS.
+
+    Must be handed a projected geometry: on raw lon/lat this returns square
+    degrees, which vary with latitude and are not an area.
+
+    Counting courtyards says how many buildings enclose open space; this says
+    how much. For a quarter's liveability the second is the useful one -- a
+    palace around a 900 m2 court and a tenement around a 6 m2 lightwell both
+    score 1 on the count.
+    """
+    if geom is None or geom.is_empty:
+        return 0.0
+    parts = geom.geoms if geom.geom_type == "MultiPolygon" else [geom]
+    total = 0.0
+    for part in parts:
+        if part.geom_type != "Polygon":
+            continue
+        for ring in part.interiors:
+            total += Polygon(ring).area
+    return total
+
+
+def courtyard_summary(gdf: gpd.GeoDataFrame, min_area_m2: float = 0.0) -> dict:
+    """Courtyard provision among residential buildings.
+
+    Restricted to RESIDENTIAL values on purpose: building=yes is untyped, so
+    counting its courtyards would mix homes with anything else that happens to
+    be undertagged, and building=yes is a quarter of the stock in Mala Strana.
+    """
+    if gdf.empty or "courtyard_area_m2" not in gdf.columns:
+        return {"residential_buildings": 0, "with_courtyard": 0,
+                "courtyard_area_m2": 0.0, "min_area_m2": min_area_m2}
+
+    res = gdf[gdf.get("building", "").astype(str).str.lower().isin(RESIDENTIAL)]
+    big = res[res["courtyard_area_m2"] >= min_area_m2] if min_area_m2 else res
+    with_yard = big[big["courtyard_area_m2"] > 0]
+
+    out = {
+        "residential_buildings": int(len(res)),
+        "with_courtyard": int(len(with_yard)),
+        "courtyard_area_m2": round(float(with_yard["courtyard_area_m2"].sum()), 1),
+        "min_area_m2": min_area_m2,
+    }
+    if len(with_yard):
+        out["median_courtyard_m2"] = round(float(with_yard["courtyard_area_m2"].median()), 1)
+        out["max_courtyard_m2"] = round(float(with_yard["courtyard_area_m2"].max()), 1)
+        out["courtyard_share_of_footprint"] = round(
+            float(with_yard["courtyard_area_m2"].sum()
+                  / (with_yard["area_m2"].sum() + with_yard["courtyard_area_m2"].sum())), 3
+        )
+    if min_area_m2:
+        dropped = res[(res["courtyard_area_m2"] > 0) & (res["courtyard_area_m2"] < min_area_m2)]
+        out["below_threshold"] = int(len(dropped))
+    return out
+
+
 def add_metrics(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """Attach derived columns: courtyards, footprint area in m^2, flats.
 
@@ -62,10 +120,15 @@ def add_metrics(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     out["courtyards"] = out.geometry.apply(courtyard_count)
 
     if len(out):
+        # Courtyard area shares this projection: on EPSG:4326 both would be
+        # square degrees. .area already excludes the holes, so the two columns
+        # are footprint and enclosed void, not overlapping.
         metric = out.to_crs(out.estimate_utm_crs())
         out["area_m2"] = metric.geometry.area.round(1)
+        out["courtyard_area_m2"] = metric.geometry.apply(courtyard_area).round(1)
     else:
         out["area_m2"] = []
+        out["courtyard_area_m2"] = []
 
     # building:flats -> integer column `flats` (None = not tagged / unparseable)
     src = out["building:flats"] if "building:flats" in out.columns else None
@@ -99,7 +162,8 @@ def flats_summary(gdf: gpd.GeoDataFrame) -> dict:
     return out
 
 
-def summarize(gdf: gpd.GeoDataFrame, tag: str = "building", top: int = 10) -> str:
+def summarize(gdf: gpd.GeoDataFrame, tag: str = "building", top: int = 10,
+              min_courtyard_m2: float = 0.0) -> str:
     """Human-readable breakdown of a feature set."""
     if gdf.empty:
         return "  (no features)"
@@ -116,6 +180,26 @@ def summarize(gdf: gpd.GeoDataFrame, tag: str = "building", top: int = 10) -> st
         pct = 100 * with_yards / len(gdf)
         lines.append("")
         lines.append(f"  with courtyards : {with_yards} ({pct:.1f}%), {total} in total")
+
+    if "courtyard_area_m2" in gdf.columns:
+        c = courtyard_summary(gdf, min_courtyard_m2)
+        n_res = c["residential_buildings"]
+        lines.append("")
+        lines.append(f"  courtyards, residential only ({n_res} buildings; "
+                     "building=yes excluded as untyped):")
+        if not n_res or not c["with_courtyard"]:
+            lines.append("      none")
+        else:
+            share = 100 * c["with_courtyard"] / n_res
+            lines.append(f"      with a courtyard  : {c['with_courtyard']} ({share:.1f}%)")
+            lines.append(f"      total area        : {c['courtyard_area_m2']:,.0f} m2")
+            lines.append(f"      median / max      : {c['median_courtyard_m2']:,.0f}"
+                         f" / {c['max_courtyard_m2']:,.0f} m2")
+            lines.append(f"      share of block    : {100 * c['courtyard_share_of_footprint']:.1f}%"
+                         "  (courtyard / (footprint + courtyard))")
+            if c.get("below_threshold"):
+                lines.append(f"      below {min_courtyard_m2:,.0f} m2 threshold"
+                             f", not counted: {c['below_threshold']}")
 
     if "area_m2" in gdf.columns and len(gdf):
         lines.append(f"  footprint m^2   : median {gdf['area_m2'].median():.0f}, "
