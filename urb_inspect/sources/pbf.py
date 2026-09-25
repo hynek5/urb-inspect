@@ -15,9 +15,11 @@ from typing import Iterator, Sequence
 
 import osmium
 import geopandas as gpd
-from shapely.geometry import shape
+from shapely.geometry import Polygon, shape
 from shapely.geometry.base import BaseGeometry
+from shapely.ops import unary_union
 from shapely.prepared import prep
+from shapely.strtree import STRtree
 
 from .base import (
     DEFAULT_POI_KEYS,
@@ -164,6 +166,9 @@ class PbfSource:
                 }
             )
 
+        rows, duplicated = _drop_ways_duplicated_by_relations(rows)
+        discarded["way duplicated by relation"] = duplicated
+
         features = (
             gpd.GeoDataFrame(rows, geometry="geometry", crs=OSM_CRS)
             if rows
@@ -279,6 +284,9 @@ class PbfSource:
                 }
             )
 
+        rows, duplicated = _drop_ways_duplicated_by_relations(rows)
+        discarded["way duplicated by relation"] = duplicated
+
         features = (
             gpd.GeoDataFrame(rows, geometry="geometry", crs=OSM_CRS)
             if rows
@@ -319,6 +327,64 @@ class PbfSource:
         for obj in areas:
             element = "way" if obj.from_way() else "relation"
             yield element, obj.orig_id(), dict(obj.tags), _geometry_of(obj)
+
+
+def _solid(geom: BaseGeometry) -> BaseGeometry | None:
+    """The outline with holes filled in.
+
+    A way that duplicates a relation *is* that relation's outer ring, so the
+    two match on their exteriors even though their areas differ by whatever
+    the courtyard takes up. Comparing filled outlines is therefore exact where
+    comparing areas would miss any building with a sizeable courtyard.
+    """
+    parts = geom.geoms if geom.geom_type == "MultiPolygon" else [geom]
+    solids = [Polygon(p.exterior) for p in parts if p.geom_type == "Polygon"]
+    if not solids:
+        return None
+    return solids[0] if len(solids) == 1 else unary_union(solids)
+
+
+def _drop_ways_duplicated_by_relations(
+    rows: list[dict], overlap: float = 0.99
+) -> tuple[list[dict], int]:
+    """Remove way-areas that are the outer ring of a relation-area in `rows`.
+
+    Tagging both the outer way and its multipolygon relation is a mapping
+    error -- a leftover of the pre-2010 convention that put tags on the way --
+    but it produces two areas for one building, with different geometry: the
+    way has no courtyard, the relation does.
+
+    Containment alone would be wrong: a small building standing inside a
+    courtyard is legitimately separate, and it is not caught here because the
+    courtyard is a hole, so it lies outside the relation's polygon. Matching
+    filled outlines both ways only ever catches the same object twice over.
+    """
+    rel_solids = [
+        _solid(r["geometry"]) for r in rows if r["element"] == "relation"
+    ]
+    rel_solids = [g for g in rel_solids if g is not None and not g.is_empty]
+    if not rel_solids:
+        return rows, 0
+
+    tree = STRtree(rel_solids)
+    kept, dropped = [], 0
+    for row in rows:
+        if row["element"] != "relation":
+            way_solid = _solid(row["geometry"])
+            if way_solid is not None and not way_solid.is_empty:
+                duplicate = False
+                for idx in tree.query(way_solid):
+                    rel_solid = rel_solids[idx]
+                    inter = way_solid.intersection(rel_solid).area
+                    if (inter >= overlap * way_solid.area
+                            and inter >= overlap * rel_solid.area):
+                        duplicate = True
+                        break
+                if duplicate:
+                    dropped += 1
+                    continue
+        kept.append(row)
+    return kept, dropped
 
 
 def _geometry_of(obj) -> BaseGeometry | None:
