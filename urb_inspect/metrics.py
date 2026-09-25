@@ -75,7 +75,8 @@ def courtyard_area(geom: BaseGeometry) -> float:
     return total
 
 
-def courtyard_summary(gdf: gpd.GeoDataFrame, min_area_m2: float = 0.0) -> dict:
+def courtyard_summary(gdf: gpd.GeoDataFrame, min_area_m2: float = 0.0,
+                      bin_width: float = 25.0) -> dict:
     """Courtyard provision among residential buildings.
 
     Restricted to RESIDENTIAL values on purpose: building=yes is untyped, so
@@ -106,6 +107,46 @@ def courtyard_summary(gdf: gpd.GeoDataFrame, min_area_m2: float = 0.0) -> dict:
     if min_area_m2:
         dropped = res[(res["courtyard_area_m2"] > 0) & (res["courtyard_area_m2"] < min_area_m2)]
         out["below_threshold"] = int(len(dropped))
+    out["histogram_m2"] = dict(
+        courtyard_histogram(gdf, bin_width=bin_width, min_area_m2=min_area_m2)
+    )
+    return out
+
+
+def courtyard_histogram(
+    gdf: gpd.GeoDataFrame,
+    bin_width: float = 25.0,
+    bins: int = 12,
+    min_area_m2: float = 0.0,
+) -> list[tuple[str, int]]:
+    """Distribution of residential courtyard sizes, smallest bin first.
+
+    A median hides the shape, and this distribution has a lot of shape: in
+    Mala Strana it runs from a 6 m2 lightwell to an 859 m2 palace court, so
+    one number in the middle describes almost nothing.
+
+    The last bin is open-ended. Fixed bins all the way to the maximum would
+    be mostly empty -- at 10 m2 each the Mala Strana range needs 86 of them.
+    """
+    if gdf.empty or "courtyard_area_m2" not in gdf.columns:
+        return []
+    res = gdf[gdf.get("building", "").astype(str).str.lower().isin(RESIDENTIAL)]
+    areas = res.loc[res["courtyard_area_m2"] > 0, "courtyard_area_m2"]
+    if min_area_m2:
+        areas = areas[areas >= min_area_m2]
+    if areas.empty:
+        return []
+
+    cutoff = bin_width * bins
+    out: list[tuple[str, int]] = []
+    for i in range(bins):
+        low, high = bin_width * i, bin_width * (i + 1)
+        n = int(((areas >= low) & (areas < high)).sum())
+        out.append((f"{low:g}-{high:g}", n))
+    out.append((f"{cutoff:g}+", int((areas >= cutoff).sum())))
+    # trailing empty bins say nothing; leading ones show the lightwells
+    while len(out) > 1 and out[-1][1] == 0:
+        out.pop()
     return out
 
 
@@ -163,7 +204,7 @@ def flats_summary(gdf: gpd.GeoDataFrame) -> dict:
 
 
 def summarize(gdf: gpd.GeoDataFrame, tag: str = "building", top: int = 10,
-              min_courtyard_m2: float = 0.0) -> str:
+              min_courtyard_m2: float = 0.0, courtyard_bin_m2: float = 25.0) -> str:
     """Human-readable breakdown of a feature set."""
     if gdf.empty:
         return "  (no features)"
@@ -200,6 +241,16 @@ def summarize(gdf: gpd.GeoDataFrame, tag: str = "building", top: int = 10,
             if c.get("below_threshold"):
                 lines.append(f"      below {min_courtyard_m2:,.0f} m2 threshold"
                              f", not counted: {c['below_threshold']}")
+
+            hist = courtyard_histogram(gdf, bin_width=courtyard_bin_m2,
+                                       min_area_m2=min_courtyard_m2)
+            if hist:
+                widest = max(n for _, n in hist) or 1
+                lines.append("")
+                lines.append("      size distribution (m2):")
+                for label, n in hist:
+                    bar = "#" * round(30 * n / widest)
+                    lines.append(f"        {label:>10s} {n:4d}  {bar}")
 
     if "area_m2" in gdf.columns and len(gdf):
         lines.append(f"  footprint m^2   : median {gdf['area_m2'].median():.0f}, "

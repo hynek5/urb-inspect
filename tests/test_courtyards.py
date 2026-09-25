@@ -174,3 +174,78 @@ def test_threshold_reaches_meta_json(tmp_path, courtyard_pbf):
     assert filtered["min_area_m2"] == yard_m2 * 2
     assert filtered["with_courtyard"] == 0
     assert filtered["below_threshold"] == 1
+
+
+def _sized(areas, building="residential"):
+    """A residential frame with the given courtyard areas."""
+    return gpd.GeoDataFrame(
+        {"building": [building] * len(areas),
+         "courtyard_area_m2": list(areas),
+         "area_m2": [200.0] * len(areas),
+         "geometry": [SOLID] * len(areas)},
+        crs="EPSG:32633",
+    )
+
+
+def test_histogram_bins_are_half_open_and_ordered():
+    from urb_inspect.metrics import courtyard_histogram
+
+    hist = courtyard_histogram(_sized([0.0, 10.0, 24.9, 25.0, 49.9]), bin_width=25, bins=2)
+    # 0.0 is not a courtyard, so the first bin holds 10.0 and 24.9 only;
+    # 25.0 falls in the upper bin, the boundary belongs to the bin above it
+    assert hist[0] == ("0-25", 2)
+    assert hist[1] == ("25-50", 2)
+
+
+def test_buildings_without_a_courtyard_are_not_in_the_histogram():
+    from urb_inspect.metrics import courtyard_histogram
+
+    hist = courtyard_histogram(_sized([0.0, 0.0, 30.0]), bin_width=25, bins=2)
+    assert sum(n for _, n in hist) == 1
+
+
+def test_last_bin_is_open_ended():
+    """Fixed bins to the maximum would be mostly empty: at 10 m2 each the
+    Mala Strana range needs 86 of them."""
+    from urb_inspect.metrics import courtyard_histogram
+
+    hist = courtyard_histogram(_sized([10.0, 900.0]), bin_width=25, bins=2)
+    assert hist[-1] == ("50+", 1)
+
+
+def test_trailing_empty_bins_are_trimmed_but_leading_ones_kept():
+    from urb_inspect.metrics import courtyard_histogram
+
+    hist = courtyard_histogram(_sized([200.0]), bin_width=25, bins=12)
+    assert hist[0] == ("0-25", 0)                     # the lightwell range stays visible
+    assert hist[-1][1] > 0                            # nothing empty on the end
+
+
+def test_histogram_respects_the_threshold():
+    from urb_inspect.metrics import courtyard_histogram
+
+    hist = courtyard_histogram(_sized([6.0, 300.0]), bin_width=25, bins=2, min_area_m2=50)
+    assert sum(n for _, n in hist) == 1               # the 6 m2 lightwell is out
+
+
+def test_non_residential_is_excluded_from_the_histogram():
+    from urb_inspect.metrics import courtyard_histogram
+
+    assert courtyard_histogram(_sized([300.0], building="church")) == []
+
+
+def test_histogram_reaches_meta_json(tmp_path, courtyard_pbf):
+    boundary = Boundary(geometry=box(17.09, 48.13, 17.12, 48.16), name="Yard",
+                        provenance="test")
+    result = PbfSource(courtyard_pbf).fetch(boundary, {"building": True})
+    enriched = add_metrics(result.features)
+
+    meta = json.loads(
+        next(p for p in write_result(result, tmp_path, features=enriched,
+                                     courtyard_bin_m2=10.0)
+             if p.suffix == ".json").read_text(encoding="utf-8")
+    )
+    hist = meta["counts"]["courtyards"]["histogram_m2"]
+    assert hist, "histogram must be recorded, not only printed"
+    assert sum(hist.values()) == 1
+    assert all("-" in k or k.endswith("+") for k in hist)
