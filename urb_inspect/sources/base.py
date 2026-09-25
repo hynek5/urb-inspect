@@ -8,7 +8,7 @@ drops a fifth of its input looks exactly like a correct count.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Protocol, Sequence, runtime_checkable
 
 import geopandas as gpd
 from shapely.geometry.base import BaseGeometry
@@ -19,6 +19,24 @@ OSM_CRS = "EPSG:4326"
 
 # Values of building=* that explicitly deny a building exists.
 NON_BUILDING = frozenset({"no", "none"})
+
+# Tag keys that mark a service or point of interest. Order matters: one object
+# can carry several (a surgery is often amenity=doctors *and* healthcare=doctor,
+# a shop is often also building=retail), and the first match decides how the
+# feature is labelled, so that it is counted once and under its primary role.
+DEFAULT_POI_KEYS: tuple[str, ...] = (
+    "amenity",
+    "shop",
+    "leisure",
+    "tourism",
+    "office",
+    "healthcare",
+    "craft",
+)
+
+# Values that assert a service is *not* there. shop=no on a former shopfront is
+# a deliberate mapping statement, not a service.
+ABSENT_VALUES = frozenset({"no", "none"})
 
 Predicate = str  # "within" | "intersects"
 
@@ -103,6 +121,25 @@ def tags_match(obj_tags: dict[str, str], wanted: dict[str, object]) -> bool:
             if value not in want:
                 return False
     return True
+
+
+def first_poi_key(
+    obj_tags: dict[str, str], keys: Sequence[str]
+) -> tuple[str | None, str | None]:
+    """The first of `keys` this object carries with a real value.
+
+    Returns (None, None) when it carries none, or only explicit absences.
+    Deciding by `keys` order is what keeps a doubly-tagged object one feature.
+    """
+    for key in keys:
+        value = obj_tags.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text or text.lower() in ABSENT_VALUES:
+            continue
+        return key, text
+    return None, None
 
 
 def empty_frame() -> gpd.GeoDataFrame:

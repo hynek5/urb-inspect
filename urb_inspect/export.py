@@ -20,7 +20,7 @@ from pathlib import Path
 
 import geopandas as gpd
 
-from .metrics import flats_summary
+from .metrics import flats_summary, poi_summary, value_counts_by_key
 from .sources.base import FetchResult
 
 # Columns worth putting in the human-readable CSV. OSM data is very wide --
@@ -44,6 +44,28 @@ CORE_COLUMNS = [
     "area_m2",
     "courtyards",
 ]
+
+# POI results are a different shape: mostly point geometry, and the columns
+# that matter are what the service is rather than how big its footprint is.
+POI_CORE_COLUMNS = [
+    "element",
+    "osm_id",
+    "poi_key",
+    "poi_value",
+    "category",
+    "audience",
+    "name",
+    "addr:street",
+    "addr:housenumber",
+    "cuisine",
+    "opening_hours",
+]
+
+
+def core_columns(gdf: gpd.GeoDataFrame) -> list[str]:
+    """Which projection to write to CSV, decided by what the frame contains."""
+    wanted = POI_CORE_COLUMNS if "poi_key" in gdf.columns else CORE_COLUMNS
+    return [c for c in wanted if c in gdf.columns]
 
 
 def slugify(text: str | None, fallback: str = "area") -> str:
@@ -106,6 +128,14 @@ def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame) -> dict:
         meta["counts"]["with_courtyards"] = int((gdf["courtyards"] > 0).sum())
     if "flats" in gdf.columns:
         meta["counts"]["flats"] = flats_summary(gdf)
+    if "poi_key" in gdf.columns:
+        # unclassified_pairs travels with the counts on purpose: it is the
+        # worklist for extending poi_classes.csv, and it is only meaningful
+        # next to the run that produced it.
+        meta["counts"].update(poi_summary(gdf))
+        # Full tally, not truncated: this is a data file, and the long tail is
+        # exactly where the unanticipated values live.
+        meta["counts"]["by_key_value"] = value_counts_by_key(gdf)
     return meta
 
 
@@ -151,7 +181,7 @@ def write_result(
     clean.to_file(gpkg_path, driver="GPKG", layer="features")
     written.append(gpkg_path)
 
-    cols = [c for c in CORE_COLUMNS if c in clean.columns]
+    cols = core_columns(clean)
     csv_path = out_dir / f"{basename}.csv"
     clean[cols].to_csv(csv_path, index=False, encoding="utf-8")
     written.append(csv_path)
