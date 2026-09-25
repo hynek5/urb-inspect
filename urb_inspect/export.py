@@ -105,7 +105,7 @@ def sanitize(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 
 def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame,
-              min_courtyard_m2: float = 0.0) -> dict:
+              min_courtyard_m2: float = 0.0, courtyard_bin_m2: float = 25.0) -> dict:
     by_element = (
         gdf["element"].value_counts().to_dict() if "element" in gdf.columns else {}
     )
@@ -137,7 +137,9 @@ def _metadata(result: FetchResult, gdf: gpd.GeoDataFrame,
     if "courtyard_area_m2" in gdf.columns:
         # Must use the same threshold the run reported, or the file contradicts
         # the summary that produced it -- and the file is what survives.
-        meta["counts"]["courtyards"] = courtyard_summary(gdf, min_courtyard_m2)
+        meta["counts"]["courtyards"] = courtyard_summary(
+            gdf, min_courtyard_m2, bin_width=courtyard_bin_m2
+        )
     if "flats" in gdf.columns:
         meta["counts"]["flats"] = flats_summary(gdf)
     if "poi_key" in gdf.columns:
@@ -157,6 +159,7 @@ def write_result(
     basename: str | None = None,
     features: gpd.GeoDataFrame | None = None,
     min_courtyard_m2: float = 0.0,
+    courtyard_bin_m2: float = 25.0,
 ) -> list[Path]:
     """Write geometry, a readable table, and provenance. Returns the paths.
 
@@ -178,8 +181,8 @@ def write_result(
 
     meta_path = out_dir / f"{basename}.meta.json"
     meta_path.write_text(
-        json.dumps(_metadata(result, gdf, min_courtyard_m2), indent=2,
-                   ensure_ascii=False),
+        json.dumps(_metadata(result, gdf, min_courtyard_m2, courtyard_bin_m2),
+                   indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     written.append(meta_path)

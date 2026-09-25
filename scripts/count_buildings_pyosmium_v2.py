@@ -50,6 +50,8 @@ def main() -> int:
     ap.add_argument("--min-courtyard-m2", type=float, default=0.0, metavar="M2",
                     help="ignore courtyards below this area when summarising; "
                          "half of them are lightwells under 50 m2 (default: 0, count all)")
+    ap.add_argument("--courtyard-bin-m2", type=float, default=25.0, metavar="M2",
+                    help="histogram bin width for courtyard sizes (default: 25)")
     ap.add_argument("--check-unclosed", action="store_true",
                     help="extra pass: report building ways that are not closed rings")
     args = ap.parse_args()
@@ -98,12 +100,14 @@ def main() -> int:
     print(f"      touching boundary        : {len(touching)}")
     print(f"      straddling the boundary  : {len(touching) - len(within)}")
     print()
-    print(summarize(enriched, min_courtyard_m2=args.min_courtyard_m2))
+    print(summarize(enriched, min_courtyard_m2=args.min_courtyard_m2,
+                    courtyard_bin_m2=args.courtyard_bin_m2))
 
     if not args.no_write:
         print()
         for path in write_result(within, args.out_dir, features=enriched,
-                                 min_courtyard_m2=args.min_courtyard_m2):
+                                 min_courtyard_m2=args.min_courtyard_m2,
+                                 courtyard_bin_m2=args.courtyard_bin_m2):
             print(f"  wrote {path}")
 
     if args.check_unclosed:
